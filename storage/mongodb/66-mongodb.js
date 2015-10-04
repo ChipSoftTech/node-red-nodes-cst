@@ -48,7 +48,13 @@ module.exports = function(RED) {
         }
         return selector;
     }
-
+	
+    function ensureValidSortObject(sort) {
+        if (sort != null && (typeof sort != 'object' || Buffer.isBuffer(sort))) {
+            return JSON.parse(sort);
+        }
+        return sort;
+    }
 
     function MongoOutNode(n) {
         RED.nodes.createNode(this,n);
@@ -111,9 +117,14 @@ module.exports = function(RED) {
                                     msg.payload._id = msg._id;
                                 }
                                 coll.insert(msg.payload, function(err, item) {
-                                    if (err) {
-                                        node.error(err,msg);
-                                    }
+									if (err) {
+										msg.err = err;
+										node.send(msg);
+										node.error(err);
+									} else {
+										msg.payload = item;
+										node.send(msg);
+									}
                                 });
                             } else {
                                 coll.insert(msg, function(err,item) {
@@ -139,10 +150,21 @@ module.exports = function(RED) {
                                 }
                             });
                         } else if (node.operation === "delete") {
+							if(msg.payload._id) {
+								if(mongo.ObjectID.isValid(msg.payload._id)) {
+									msg.payload._id = new mongo.ObjectID(msg.payload._id);									
+								}
+							}							
+							
                             coll.remove(msg.payload, function(err, items) {
-                                if (err) {
-                                    node.error(err,msg);
-                                }
+								if (err) {
+									msg.err = err;
+									node.send(msg);
+									node.error(err);
+								} else {
+									msg.payload = items;
+									node.send(msg);
+								}
                             });
                         }
                     });
@@ -191,16 +213,40 @@ module.exports = function(RED) {
                         if (node.operation === "find") {
                             msg.projection = msg.projection || {};
                             selector = ensureValidSelectorObject(msg.payload);
+							
+							if(selector._id) {
+								if(mongo.ObjectID.isValid(selector._id)) {
+									selector._id = new mongo.ObjectID(selector._id);									
+								}
+							}			
+							
                             var limit = msg.limit;
-                            if (typeof limit === "string" && !isNaN(limit)) {
-                                limit = Number(limit);
-                            }
+                            if(limit) {
+								if (typeof limit === "string" && !isNaN(limit)) {
+									limit = Number(limit);
+								}
+                            } else {
+								//force 10 if not provided
+								limit = 10;
+							}
+							
                             var skip = msg.skip;
-                            if (typeof skip === "string" && !isNaN(skip)) {
-                                skip = Number(skip);
-                            }
-
-                            coll.find(selector,msg.projection).sort(msg.sort).limit(limit).skip(skip).toArray(function(err, items) {
+							if(skip) {
+								if (typeof skip === "string" && !isNaN(skip)) {
+									skip = Number(skip);
+								} 		
+							} else {
+								//force skip none
+								skip = 0;
+							}
+							
+							var sortObject = msg.sort;
+							if(sortObject) {
+								sortObject = ensureValidSortObject(sortObject)
+							}
+							
+							
+                            coll.find(selector,msg.projection).sort(sortObject).limit(limit).skip(skip).toArray(function(err, items) {
                                 if (err) {
                                     node.error(err);
                                 } else {
